@@ -7,9 +7,6 @@
 /* IPC APIs */
 #include "interfaces.h"
 
-#define SMS_TEXT_MAX_LEN    160
-#define SMS_TEXT_MAX_BYTES  (SMS_TEXT_MAX_LEN+1)
-
 // -------------------------------------------------------------------------------------------------
 /**
  *  Sierra Wireless server IP address used for data connection testing.
@@ -31,7 +28,7 @@ static char DestNumValid = false;
  *  The destination phone number we report to on events.
  */
 // -------------------------------------------------------------------------------------------------
-static char DestNum[LE_MDMDEFS_PHONE_NUM_MAX_LEN] = { 0 };
+static char DestNum[LE_MDMDEFS_PHONE_NUM_MAX_BYTES] = { 0 };
 
 // -------------------------------------------------------------------------------------------------
 /**
@@ -234,33 +231,33 @@ static le_result_t SendMessage
     le_result_t result;
 
     uint32_t messageSize = strlen(message);
-    uint32_t messagePart,i;
+    uint32_t messagePart;
+    uint32_t i;
 
-
-    if (messageSize % SMS_TEXT_MAX_LEN)
+    if (messageSize % LE_SMS_TEXT_MAX_LEN)
     {
-        messagePart = (messageSize/SMS_TEXT_MAX_LEN)+1;
+        messagePart = (messageSize/LE_SMS_TEXT_MAX_LEN)+1;
     }
     else
     {
-        messagePart = messageSize/SMS_TEXT_MAX_LEN;
+        messagePart = messageSize/LE_SMS_TEXT_MAX_LEN;
     }
 
-    for (i=0;i<messagePart;i++)
+    for (i=0; i < messagePart; i++)
     {
         uint32_t messageCopySize;
-        char messageToSend[SMS_TEXT_MAX_BYTES] = {0};
+        char messageToSend[LE_SMS_TEXT_MAX_BYTES] = {0};
 
-        if (i==messagePart-1)
+        if (i == (messagePart-1) )
         {
-            messageCopySize = messageSize % SMS_TEXT_MAX_LEN;
+            messageCopySize = messageSize % LE_SMS_TEXT_MAX_LEN;
         }
         else
         {
-            messageCopySize = SMS_TEXT_MAX_LEN;
+            messageCopySize = LE_SMS_TEXT_MAX_LEN;
         }
 
-        memcpy(messageToSend,&message[i*SMS_TEXT_MAX_LEN],messageCopySize);
+        memcpy(messageToSend, &message[i*LE_SMS_TEXT_MAX_LEN], messageCopySize);
         messageToSend[messageCopySize] = '\0';
 
         // Allocate a message object from the SMS pool.  If this fails, the application will halt, so
@@ -577,34 +574,42 @@ static const char* PrintNetworkName
         return "GSM";
     case LE_MRC_RAT_UMTS:
         return "UMTS";
-    case LE_MRC_RAT_UMTS_GSM:
-        return "UMTS+GSM";
     case LE_MRC_RAT_LTE:
         return "LTE";
-    case LE_MRC_RAT_LTE_GSM:
-        return "LTE+GSM";
-    case LE_MRC_RAT_LTE_UMTS:
-        return "LTE+UMTS";
-    case LE_MRC_RAT_LTE_UMTS_GSM:
-        return "LTE+UMTS+GSM";
     case LE_MRC_RAT_CDMA:
         return "CDMA";
-    case LE_MRC_RAT_CDMA_GSM:
-        return "CDMA+GSM";
-    case LE_MRC_RAT_CDMA_UMTS:
-        return "CDMA+UMTS";
-    case LE_MRC_RAT_CDMA_UMTS_GSM:
-        return "CDMA+UMTS+GSM";
-    case LE_MRC_RAT_CDMA_LTE:
-        return "CDMA+LTE";
-    case LE_MRC_RAT_CDMA_LTE_GSM:
-        return "CDMA+LTE+GSM";
-    case LE_MRC_RAT_CDMA_LTE_UMTS:
-        return "CDMA+LTE+UMTS";
-    case LE_MRC_RAT_ALL:
-        return "All technologies";
     }
     return "Undefined";
+}
+
+// -------------------------------------------------------------------------------------------------
+/**
+ *  This is a helper function to append strings to a buffer.
+ *
+ *  @return Number of bytes written in buffer.
+ */
+// -------------------------------------------------------------------------------------------------
+static int AppendToBuffer
+(
+    char* bufferPtr,
+    ssize_t bufferSz,
+    const char * formatPtr,
+    ...
+)
+{
+    int bufferIdx;
+
+    if (bufferSz <= 0)
+    {
+        return 0;
+    }
+
+    va_list args;
+    va_start(args, formatPtr);
+    bufferIdx = vsnprintf(bufferPtr, bufferSz, formatPtr, args);
+    va_end(args);
+
+    return bufferIdx;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -614,87 +619,88 @@ static const char* PrintNetworkName
 // -------------------------------------------------------------------------------------------------
 static void PerformScan
 (
-    char* buffer,  ///< [OUT] On success or failure, a message is written to this buffer.
+    char* bufferPtr,         ///< [OUT] On success or failure, a message is written to this buffer.
+    size_t bufferSz,         ///< [IN] Size of the output buffer.
     const char* requesterPtr ///< [IN] If not NULL, then any response text is SMSed to this target.
 )
 {
     int bufferIdx = 0;
+
     le_mrc_ScanInformationListRef_t scanInformationList = NULL;
-    fprintf(stdout, "Scan was asked");
-    scanInformationList = le_mrc_PerformCellularNetworkScan(LE_MRC_RAT_ALL);
+    fprintf(OutputFilePtr, "Scan was asked");
+    scanInformationList = le_mrc_PerformCellularNetworkScan(LE_MRC_BITMASK_RAT_ALL);
     if (!scanInformationList)
     {
-        bufferIdx += sprintf(&buffer[bufferIdx], "Could not perform scan\n");
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "Could not perform scan\n");
         return;
     }
 
     le_mrc_ScanInformationRef_t cellRef;
 
-    uint32_t i;
-    for (i=1;i<LE_MRC_RAT_ALL;i=i<<1)
+    for (cellRef=le_mrc_GetFirstCellularNetworkScan(scanInformationList);
+         cellRef!=NULL;
+         cellRef=le_mrc_GetNextCellularNetworkScan(scanInformationList))
     {
-        for (cellRef=le_mrc_GetFirstCellularNetworkScan(scanInformationList);
-             cellRef!=NULL;
-             cellRef=le_mrc_GetNextCellularNetworkScan(scanInformationList))
+        char mcc[4], mnc[4];
+        char name[100];
+        le_mrc_Rat_t rat;
+
+        bufferIdx = 0;
+
+        rat = le_mrc_GetCellularNetworkRat(cellRef);
+
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), " %s ", PrintNetworkName(rat));
+
+        if (le_mrc_GetCellularNetworkMccMnc(cellRef, mcc, sizeof(mcc), mnc, sizeof(mnc)) != LE_OK)
         {
-            char mcc[4],mnc[4];
-            char name[100];
-            bufferIdx = 0;
+            bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "Failed to get operator code.\n");
+        }
+        else
+        {
+            bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "%s-%s ", mcc, mnc);
+        }
 
-            if (le_mrc_IsCellularNetworkRatAvailable(cellRef,i)) {
+        if (le_mrc_GetCellularNetworkName(cellRef, name, sizeof(name)) != LE_OK)
+        {
+            bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "Failed to get operator name.\n");
+        }
+        else
+        {
+            bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "%s", name);
+        }
 
-                if (le_mrc_GetCellularNetworkMccMnc(cellRef,mcc,sizeof(mcc),mnc,sizeof(mnc))!=LE_OK)
-                {
-                    bufferIdx += sprintf(&buffer[bufferIdx], "Failed to get operator code.\n");
-                }
-                else
-                {
-                    bufferIdx += sprintf(&buffer[bufferIdx], "%s-%s ",mcc,mnc);
-                }
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), " - %s ", PrintNetworkName(rat));
 
-                if (le_mrc_GetCellularNetworkName(cellRef, name, sizeof(name)) != LE_OK)
-                {
-                    bufferIdx += sprintf(&buffer[bufferIdx], "Failed to get operator name.\n");
-                }
-                else
-                {
-                    bufferIdx += sprintf(&buffer[bufferIdx], "%s",name);
-                }
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "%s,",
+                             le_mrc_IsCellularNetworkInUse(cellRef)?"In use":"Unused");
 
-                bufferIdx += sprintf(&buffer[bufferIdx]," - %s ",PrintNetworkName(i));
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "%s,",
+                             le_mrc_IsCellularNetworkAvailable(cellRef)?"Available":"Unavailable");
 
-                bufferIdx += sprintf(&buffer[bufferIdx],"%s,",
-                                     le_mrc_IsCellularNetworkInUse(cellRef)?"Is used":"Is not used");
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "%s,",
+                             le_mrc_IsCellularNetworkHome(cellRef)?"Home":"Roaming");
 
-                bufferIdx += sprintf(&buffer[bufferIdx],"%s,",
-                                     le_mrc_IsCellularNetworkAvailable(cellRef)?"Is available":"Is not available");
+        bufferIdx += AppendToBuffer(&bufferPtr[bufferIdx], (bufferSz - bufferIdx), "%s\n",
+                             le_mrc_IsCellularNetworkForbidden(cellRef)?"Forbidden":"Allowed");
 
-                bufferIdx += sprintf(&buffer[bufferIdx],"%s,",
-                                     le_mrc_IsCellularNetworkHome(cellRef)?"Home":"Roaming");
-
-                bufferIdx += sprintf(&buffer[bufferIdx],"%s\n",
-                                     le_mrc_IsCellularNetworkForbidden(cellRef)?"Forbidden":"Allowed");
-
-                // Check to see if any processing has occurred.  If so, check to see if the request came from a
-                // local or remote requester.
-                // If the requester was local, (requesterPtr == NULL) then simply log our response to the SMS log.
-                // Otherwise, attempt to SMS the response string to the original caller.
-                if (requesterPtr != NULL)
-                {
-                    SendMessage(requesterPtr, buffer);
-                }
-                else if (OutputFilePtr != NULL)
-                {
-                    fprintf(OutputFilePtr, "## %s ##\n", buffer);
-                    fflush(OutputFilePtr);
-                }
-            }
+        // Check to see if any processing has occurred.  If so, check to see if the request came from a
+        // local or remote requester.
+        // If the requester was local, (requesterPtr == NULL) then simply log our response to the SMS log.
+        // Otherwise, attempt to SMS the response string to the original caller.
+        if (requesterPtr != NULL)
+        {
+            SendMessage(requesterPtr, bufferPtr);
+        }
+        else if (OutputFilePtr != NULL)
+        {
+            fprintf(OutputFilePtr, "## %s ##\n", bufferPtr);
+            fflush(OutputFilePtr);
         }
     }
 
     le_mrc_DeleteCellularNetworkScan(scanInformationList);
 
-    bufferIdx += sprintf(&buffer[0], "Scan was Performed");
+    bufferIdx += snprintf(&bufferPtr[0], bufferSz, "Scan was Performed");
 }
 
 
@@ -763,35 +769,33 @@ static bool ProcessCommand
     {
         // Like the status command, this command queries the underling hardware for information.
         // This information is turned into a string that can then be returned to the caller.
-        const uint32_t simSlot = 1;
-        le_sim_ObjRef_t simRef = le_sim_Create(simSlot);
+        le_sim_Id_t simId;
+        le_sim_States_t simState;
 
         char iccid[100];
         char imsi[100];
         int pos = 0;
 
-        le_sim_States_t simState = le_sim_GetState(simRef);
+        simId = le_sim_GetSelectedCard();
+        simState = le_sim_GetState(simId);
 
         pos += snprintf(buffer + pos, sizeof(buffer) - pos,
-                "SIM %u of %u is %s.",
-                (simSlot+1),
-                le_sim_CountSlots(),
+                "SIM %u is %s.",
+                simId,
                 GetSimStateString(simState));
 
-        if(le_sim_GetICCID(simRef, iccid, sizeof(iccid)) == LE_OK)
+        if(le_sim_GetICCID(simId, iccid, sizeof(iccid)) == LE_OK)
         {
             pos += snprintf(buffer + pos, sizeof(buffer) - pos,
                     " ICCID=%s", iccid);
         }
 
-        if(le_sim_GetIMSI(simRef, imsi, sizeof(imsi)) == LE_OK)
+        if(le_sim_GetIMSI(simId, imsi, sizeof(imsi)) == LE_OK)
         {
             pos += snprintf(buffer + pos, sizeof(buffer) - pos,
                     " IMSI=%s", imsi);
         }
 
-        // Release my SIM object reference.
-        le_sim_Delete(simRef);
     }
     else if (strcmp(textPtr, "Online") == 0)
     {
@@ -825,7 +829,7 @@ static bool ProcessCommand
     }
     else if (strcmp(textPtr, "Scan") == 0)
     {
-        PerformScan(buffer,requesterPtr);
+        PerformScan(buffer, sizeof(buffer), requesterPtr);
     }
     else
     {
@@ -878,15 +882,16 @@ static void SmsReceivedHandler
     }
 
     // Now, extract the relavant information and record the message in the appropriate places.
-    char tel[LE_MDMDEFS_PHONE_NUM_MAX_LEN] = { 0 };
-    char text[LE_SMS_TEXT_MAX_LEN] = { 0 };
+    char tel[LE_MDMDEFS_PHONE_NUM_MAX_BYTES] = { 0 };
+    char text[LE_SMS_TEXT_MAX_BYTES] = { 0 };
 
-    le_sms_GetSenderTel(messagePtr, tel, LE_MDMDEFS_PHONE_NUM_MAX_LEN);
-    le_sms_GetText(messagePtr, text, LE_SMS_TEXT_MAX_LEN);
+    le_sms_GetSenderTel(messagePtr, tel, LE_MDMDEFS_PHONE_NUM_MAX_BYTES);
+    le_sms_GetText(messagePtr, text, LE_SMS_TEXT_MAX_BYTES);
 
     // We are now reporting to this person
     DestNumValid = true;
-    le_utf8_Copy(DestNum, tel, sizeof(DestNum), NULL);
+    strncpy(DestNum, tel, LE_MDMDEFS_PHONE_NUM_MAX_LEN);
+    DestNum[LE_MDMDEFS_PHONE_NUM_MAX_LEN] = '\0';
 
     LE_INFO("Message: %s: %s", tel, text);
 
@@ -1011,7 +1016,7 @@ COMPONENT_INIT
     LE_INFO("Running modemDemo\n");
 
     // register network state handler
-    le_mrc_AddNetRegStateHandler(NetRegStateHandler, NULL);
+    le_mrc_AddNetRegStateEventHandler(NetRegStateHandler, NULL);
 
     // register sms handler
     le_sms_AddRxMessageHandler(SmsReceivedHandler, NULL);
